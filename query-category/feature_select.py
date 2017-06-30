@@ -6,24 +6,11 @@
 # @File    : feature_select.py
 # @desc    : 特征选择
 
-import pandas as pd
 import numpy as np
-from pandas import DataFrame, Series
-from sklearn.externals import joblib
-from sklearn.feature_extraction.text import TfidfTransformer
+import pandas as pd
+from pandas import DataFrame
 from sklearn.feature_extraction.text import CountVectorizer
-from sklearn.model_selection import train_test_split
-import csv
-from sklearn.naive_bayes import MultinomialNB
-from sklearn.naive_bayes import BernoulliNB
-from sklearn.model_selection import GridSearchCV
-from sklearn.pipeline import Pipeline
-import matplotlib.pyplot as plt
-from sklearn.feature_selection import SelectKBest
-from sklearn.feature_selection import mutual_info_classif
-from sklearn.metrics import mutual_info_score
-from sklearn.feature_selection import chi2
-from sklearn.metrics import classification_report
+from sklearn.feature_extraction.text import TfidfTransformer
 
 from common_utils import get_logger_obj
 
@@ -105,10 +92,16 @@ def feature_select():
 
     total_term_matrix = vectorizer_total.fit_transform(df['new_data'])
 
+
     #idf 持久化
-    total_idf = TfidfTransformer()
+    total_idf = TfidfTransformer(norm=None)
     total_idf_vector = total_idf.fit(total_term_matrix)
-    joblib.dump(total_idf_vector, '/search/odin/taoyongbo/sogou-ml/model/idf_vetor')
+    with open('/search/odin/taoyongbo/sogou-ml/model/idf_vetor',encoding='gb18030',mode='w') as idf_writer:
+        for feature_name, idf in zip(vectorizer_total.get_feature_names(), total_idf.idf_):
+            idf_str = '\t'.join((feature_name,str(idf)))+'\n'
+            idf_writer.write(idf_str)
+
+
 
     feature_names = vectorizer_total.get_feature_names()
     transpose_term_matrix = total_term_matrix.transpose()
@@ -137,6 +130,7 @@ def feature_select():
         category_df.index.name = 'term'
         category_df.reset_index(inplace=True)
         dd = dd.merge(category_df, how='left', left_on=['term'], right_on=['term'])
+    # 部分词未出现在当前类别下，填充0
     dd.fillna(0, inplace=True)
 
     # 统计每个类别的词频数
@@ -163,31 +157,33 @@ def feature_select():
     dd.to_pickle('/search/odin/taoyongbo/sogou-ml/data/mi_feature')
     feature_select_logger.info('compute tf info ')
 
-    # 计算频次
+
+
+    # 计算文档频次
     feature_names_dict = {}
     for i, v in enumerate(feature_names):
         score = calclate_dscore(transpose_term_lil_data[i], doc_len)
         feature_names_dict[v] = score
 
-    # 频次降序排序并转化dataframe
+    # 文档频次降序排序并转化dataframe
     sort_feature_names_dict = sorted(feature_names_dict.items(), key=lambda d: d[1], reverse=True)
-    feature_tf = DataFrame(sort_feature_names_dict, columns=['name', 'score'])
-    feature_select_logger.info('tf to disk')
+    feature_df = DataFrame(sort_feature_names_dict, columns=['name', 'score'])
+    feature_select_logger.info('df to disk')
 
     # 频次持久化
-    feature_tf.to_pickle('/search/odin/taoyongbo/sogou-ml/data/tf_feature')
+    feature_df.to_pickle('/search/odin/taoyongbo/sogou-ml/data/tf_feature')
 
     # 持久化交集特征值
-    feture_num = [10000, 20000, 60000,100000, 200000, 400000]
+    feture_num = [300000, 500000]
     feature_tm_df_path = '/search/odin/taoyongbo/sogou-ml/data/tf_mi_feature_select/'
     for i in feture_num:
-        feature_tf_select = feature_tf.loc[:i]
+        feature_df_select = feature_df.loc[:i]
         feature_mi_select = dd.loc[:i, ['term', 'var']]
-        current_feature_df = feature_tf_select.merge(feature_mi_select, left_on=['name'], right_on=['term'],
+        current_feature_dataframe = feature_df_select.merge(feature_mi_select, left_on=['name'], right_on=['term'],
                                                      how='inner')
-        feature_len = len(current_feature_df)
+        feature_len = len(current_feature_dataframe)
         file_name = str(i) + '_' + str(feature_len) + '_feature_tm_df'
-        current_feature_df.to_csv(feature_tm_df_path + file_name, sep='\t', encoding='gb18030', index=False)
+        current_feature_dataframe.to_csv(feature_tm_df_path + file_name, sep='\t', encoding='gb18030', index=False)
 
     feature_select_logger.info('intersection for tf,var and save to disk')
 

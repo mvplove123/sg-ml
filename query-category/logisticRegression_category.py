@@ -14,8 +14,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.utils import shuffle
 
 from common_utils import logger, get_files, print_exception
-from ml_utils import model_fit, matrix_fit
-import multiprocessing
+from ml_utils import model_fit, matrix_fit, create_idf_dict
 
 now = datetime.datetime.now().strftime('%Y%m%d_%H:%M')
 report_folder_path = '/search/odin/taoyongbo/sogou-ml/data/report/'
@@ -38,7 +37,20 @@ def suffix_data(data):
     return ' '.join(new_data)
 
 
-def execute_task(all_data, fileList, idf_vector, shuffle_num):
+def get_idf_by_feature_name(final_feature_names, idf_vector):
+    """
+    根据特征名获取对应的idf
+    :param final_feature_names: 
+    :param idf_vector: 
+    :return: 
+    """
+    idf_feature_names = []
+    for feature_name in final_feature_names:
+        idf_feature_names.append(idf_vector[feature_name])
+    return idf_feature_names
+
+
+def execute_task(all_data, fileList, idf_vector_dict, shuffle_num):
     try:
         print('begin execute')
         start_time = time.time()
@@ -55,13 +67,16 @@ def execute_task(all_data, fileList, idf_vector, shuffle_num):
 
             final_feature_names = mi_tf_feature['name'].values
 
-            X_train, y_train, X_test, y_test = matrix_fit(train_test=train_test, feature_names=final_feature_names,
-                                                          idf_vector=idf_vector)
+            final_feature_names_idf = get_idf_by_feature_name(final_feature_names=final_feature_names,
+                                                              idf_vector=idf_vector_dict)
 
-            methods = ['LR']
+            X_train, y_train, X_test, y_test = matrix_fit(train_test=train_test, feature_names=final_feature_names,
+                                                          idf_vector=final_feature_names_idf)
+
+            methods = ['DT']
 
             model_fit(X_train=X_train, y_train=y_train, X_test=X_test, y_test=y_test, methods=methods,
-                      report_log=report_log, is_gridSearch=True)
+                      report_log=report_log, is_gridSearch=False)
 
         logger.info('report output,use_time:{time}'.format(time=time.time() - start_time))
 
@@ -82,21 +97,16 @@ def main():
 
         all_data = pd.read_pickle('/search/odin/taoyongbo/sogou-ml/data/all_data.pickel')
         fileList, dirList = get_files('/search/odin/taoyongbo/sogou-ml/data/tf_mi_feature_select/')
-        idf_vector = joblib.load('/search/odin/taoyongbo/sogou-ml/model/idf_vetor')
+
+        idf_vector_dict = create_idf_dict()
 
         logger.info(
             'load data finished,use_time:{time},begin transform feature matrix'.format(time=time.time() - start_time))
 
-        n_samples = [5000000, 10000000]
+        n_samples = all_data.shape[0]
 
-        # pool = multiprocessing.Pool(processes=5)
-
-        for i in n_samples:
-            logger.info('feature num{num} begin train'.format(num=i))
-            execute_task(all_data, fileList, idf_vector, i)
-            # pool.apply_async(execute_task, (all_data, fileList, idf_vector, i,))
-            # pool.close()
-            # pool.join()
+        logger.info('feature num{num} begin train'.format(num=n_samples))
+        execute_task(all_data, fileList, idf_vector_dict, n_samples)
     except Exception as e:
         print_exception()
 

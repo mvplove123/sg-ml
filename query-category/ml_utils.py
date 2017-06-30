@@ -9,6 +9,7 @@ import pandas as pd
 import numpy as np
 import time
 from pandas import DataFrame, Series
+from scipy.spatial import distance
 from sklearn.ensemble import GradientBoostingClassifier, ExtraTreesClassifier, RandomForestClassifier
 from sklearn.feature_extraction.text import TfidfTransformer
 from sklearn.feature_extraction.text import CountVectorizer
@@ -35,18 +36,41 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.utils import shuffle
 
-from common_utils import logger
+from common_utils import logger, print_exception
 
 model_pkl_path = '/search/odin/taoyongbo/sogou-ml/model/'
 
 
-def feature_matrix_transform(vocabulary, fit_data, idf_vector):
-    step0 = ('count_vectorizer', CountVectorizer(vocabulary=vocabulary, token_pattern=r"\b\w+\b"))
-    step1 = ('idf_transformer', idf_vector)  # 该类会统计每个词语的tf-idf权值
-    pipeline = Pipeline(steps=[step0, step1])
+# 计算相关性
+def compute_similarity(source, target):
+    similarity = []
+    array_lengh = len(source)
+    for i in range(array_lengh):
+        result = 1 - distance.cosine(source[i], target[i])
+        similarity.append([result])
+        if result >= 0 and result <= 0.2:
+            similarity.append('无关')
+        else:
+            similarity.append('相关')
+    return similarity
 
-    data_matrix = pipeline.fit_transform(fit_data)
-    return data_matrix
+
+def create_idf_dict():
+    idf_vector_dict = {}
+    with open('/search/odin/taoyongbo/sogou-ml/model/idf_vetor', encoding='gb18030', mode='r') as idf_lines:
+        for idf_line in idf_lines:
+            fields = idf_line.strip().split('\t')
+            feature_name = fields[0]
+            idf_value = float(fields[1])
+            idf_vector_dict[feature_name] = idf_value
+    return idf_vector_dict
+
+
+def feature_matrix_transform(vocabulary, fit_data, idf_vector):
+    term_vectorizer = CountVectorizer(vocabulary=vocabulary, token_pattern=r"\b\w+\b")
+    term_tf_matrix = term_vectorizer.fit_transform(fit_data)
+    term_tf_idf_matrix = term_tf_matrix.multiply(idf_vector)
+    return term_tf_idf_matrix
 
 
 def dump_model(clf, model_name):
@@ -88,129 +112,145 @@ def analyze_report(clf, X_train, y_train, X_test, y_test, is_gridSearch):
     return output_report
 
 
+def output_report(report_log, model, clf, X_train, y_train, X_test, y_test, is_gridSearch):
+    """
+    模型报告输出
+    :param report_log: 
+    :param model: 
+    :param clf: 
+    :param X_train: 
+    :param y_train: 
+    :param X_test: 
+    :param y_test: 
+    :param is_gridSearch: 
+    :return: 
+    """
+    # 模型持久化
+    dump_model_name = '_'.join(
+        (model + '_', str(X_train.shape[0]), str(X_test.shape[0]), str(X_train.shape[1]), 'pkl'))
+    dump_model(clf, dump_model_name)
+
+    summary = '训练模型:{model},全集:{total_size},训练集:{train_size},测试集:{test_size},特征数:{feature_size}\n'. \
+        format(total_size=X_train.shape[0] + X_test.shape[0], model=model,
+               train_size=X_train.shape[0], test_size=X_test.shape[0],
+               feature_size=X_train.shape[1])
+
+    report = analyze_report(clf, X_train, y_train, X_test, y_test, is_gridSearch)
+
+    report_log.write(summary)
+    report_log.write(report)
+    report_log.write('\n\n\n')
+    report_log.flush()
+
+
 # 模型选择
 def model_fit(X_train, y_train, X_test, y_test, methods, report_log, is_gridSearch):
-    logger.info('begin model_selection')
-    # Logistic Regression
-    if 'LR' in methods:
-        start_time = time.time()
-        if is_gridSearch:
+    try:
 
-            classifier = LogisticRegression(solver='sag')
-            parameters = {'C': [1, 1e01, 1e02],
-                          # 'loss ': ['hinge', 'log'],
-                          }
-            clf = simple_classification(X_train=X_train, y_train=y_train, classifier=classifier, parameters=parameters)
+        logger.info('begin model_selection for th')
+        # Logistic Regression
+        if 'LR' in methods:
+            model_name = 'LR'
 
-        else:
-            classifier = LogisticRegression(C=10, solver='sag')
-            clf = classifier.fit(X_train, y_train)
-
-        logger.info('model_selection Logistic Regression fit finished,use_time:{time},begin predict'.format(
-            time=time.time() - start_time))
-
-        #模型持久化
-        model_name = '_'.join(
-            ('LogisticRegression_', str(X_train.shape[0]), str(X_test.shape[0]), str(X_train.shape[1]), 'pkl'))
-        dump_model(clf, model_name)
-
-        summary = '训练模型:{model},全集:{total_size},训练集:{train_size},测试集:{test_size},特征数:{feature_size}\n'. \
-            format(total_size=X_train.shape[0] + X_test.shape[0], model='LogisticRegression',
-                   train_size=X_train.shape[0], test_size=X_test.shape[0],
-                   feature_size=X_train.shape[1])
-
-        report = analyze_report(clf, X_train, y_train, X_test, y_test, is_gridSearch)
-
-        report_log.write(summary)
-        report_log.write(report)
-        report_log.write('\n\n\n')
-        report_log.flush()
-
-        # NLB
-        if 'NLB' in methods:
             start_time = time.time()
             if is_gridSearch:
-                classifier = BernoulliNB()
-                parameters = {'alpha': [1e-01,1, 1e01]}
-                clf = simple_classification(X_train=X_train, y_train=y_train, classifier=classifier, parameters=parameters)
 
+                classifier = LogisticRegression(solver='sag')
+                parameters = {'C': [1, 1e01, 1e02],
+                              # 'loss ': ['hinge', 'log'],
+                              }
+                clf = simple_classification(X_train=X_train, y_train=y_train, classifier=classifier, parameters=parameters)
             else:
-                classifier = BernoulliNB(alpha=1)
+                classifier = LogisticRegression(C=10, solver='sag', n_jobs=-1)
                 clf = classifier.fit(X_train, y_train)
 
-            logger.info('model_selection BernoulliNB fit finished,use_time:{time},begin predict'.format(
+            logger.info('model_selection Logistic Regression fit finished,use_time:{time},begin predict'.format(
                 time=time.time() - start_time))
+            output_report(report_log=report_log, model=model_name, X_train=X_train, y_train=y_train, X_test=X_test, y_test=y_test,
+                          clf=clf, is_gridSearch=is_gridSearch)
 
-            # 模型持久化
-            model_name = '_'.join(
-                ('BernoulliNB_', str(X_train.shape[0]), str(X_test.shape[0]), str(X_train.shape[1]), 'pkl'))
-            dump_model(clf, model_name)
+            # NLB
+            if 'NLB' in methods:
+                start_time = time.time()
+                if is_gridSearch:
+                    classifier = BernoulliNB()
+                    parameters = {'alpha': [1e-01, 1, 1e01]}
+                    clf = simple_classification(X_train=X_train, y_train=y_train, classifier=classifier,
+                                                parameters=parameters)
 
-            summary = '训练模型:{model},全集:{total_size},训练集:{train_size},测试集:{test_size},特征数:{feature_size}\n'. \
-                format(total_size=X_train.shape[0] + X_test.shape[0], model='BernoulliNB',
-                       train_size=X_train.shape[0], test_size=X_test.shape[0],
-                       feature_size=X_train.shape[1])
+                else:
+                    classifier = BernoulliNB(alpha=1)
+                    clf = classifier.fit(X_train, y_train)
 
-            report = analyze_report(clf, X_train, y_train, X_test, y_test, is_gridSearch)
+                logger.info('model_selection BernoulliNB fit finished,use_time:{time},begin predict'.format(
+                    time=time.time() - start_time))
+                output_report(report_log=report_log, model='LR', X_train=X_train, y_train=y_train, X_test=X_test,
+                              y_test=y_test,
+                              clf=clf, is_gridSearch=is_gridSearch)
+            # SVM
+            if 'SVM' in methods:
+                classifier = svm.SVC(kernel='rbf', probability=True, class_weight={1: 1})
+                parameters = {'C': [0.8]}
+                print('\n\n\nresult for SVC')
+                clf = simple_classification(X_train=X_train, y_train=y_train, classifier=classifier, parameters=parameters)
 
-            report_log.write(summary)
-            report_log.write(report)
-            report_log.write('\n\n\n')
-            report_log.flush()
+            # Decision Tree
+            if 'DT' in methods:
+                model_name = 'DT'
+                start_time = time.time()
+                if is_gridSearch:
+                    classifier = BernoulliNB()
+                    parameters = {'max_depth': [5, 10], 'min_samples_leaf': [3, 5, 10]}
+                    clf = simple_classification(X_train=X_train, y_train=y_train, classifier=classifier,
+                                                parameters=parameters)
+                else:
+                    logger.info('DT begin fit')
+                    classifier = DecisionTreeClassifier(max_depth=10, min_samples_leaf=5)
+                    clf = classifier.fit(X=X_train, y=y_train)
 
+                logger.info('model_selection Decision Tree fit finished,use_time:{time},begin predict'.format(
+                    time=time.time() - start_time))
+                output_report(report_log=report_log, model=model_name, X_train=X_train, y_train=y_train, X_test=X_test,
+                              y_test=y_test,clf=clf, is_gridSearch=is_gridSearch)
 
+            # Random Forest
+            if 'RF' in methods:
+                classifier = RandomForestClassifier()
+                parameters = {'n_estimators': [50, 100], 'min_samples_leaf': [3, 5, 10], 'max_depth': [5, 10]}
+                print('\n\n\nresult for Random Forest')
+                clf = simple_classification(X_train=X_train, y_train=y_train, classifier=classifier, parameters=parameters)
 
-        # SVM
-        if 'SVM' in methods:
-            classifier = svm.SVC(kernel='rbf', probability=True, class_weight={1: 1})
-            parameters = {'C': [0.8]}
-            print('\n\n\nresult for SVC')
-            clf = simple_classification(X_train=X_train, y_train=y_train, classifier=classifier, parameters=parameters)
+            # Extra Trees
+            if 'ET' in methods:
+                classifier = ExtraTreesClassifier(class_weight={0: 1, 1: 5})
+                parameters = {}
+                print('\n\n\nresult for Extra Trees')
+                clf = simple_classification(X_train=X_train, y_train=y_train, classifier=classifier, parameters=parameters)
 
-        # Decision Tree
-        if 'DT' in methods:
-            classifier = DecisionTreeClassifier()
-            parameters = {}
-            print('\n\n\nresult for Decision Tree')
-            clf = simple_classification(X_train=X_train, y_train=y_train, classifier=classifier, parameters=parameters)
-            print(clf.best_estimator_.feature_importances_)
-        # Random Forest
-        if 'RF' in methods:
-            classifier = RandomForestClassifier()
-            parameters = {'n_estimators': [50, 100], 'min_samples_leaf': [3, 5, 10], 'max_depth': [5, 10]}
-            print('\n\n\nresult for Random Forest')
-            clf = simple_classification(X_train=X_train, y_train=y_train, classifier=classifier, parameters=parameters)
+            if 'GBDT' in methods:
+                classifier = GradientBoostingClassifier()
+                parameters = {'n_estimators': [100], 'min_samples_leaf': [5, 7, 10], 'max_depth': [5, 7, 10]}
+                print('\n\n\nresult for Gradient Boosted Regression Trees')
+                clf = simple_classification(X_train=X_train, y_train=y_train, classifier=classifier, parameters=parameters)
 
-        # Extra Trees
-        if 'ET' in methods:
-            classifier = ExtraTreesClassifier(class_weight={0: 1, 1: 5})
-            parameters = {}
-            print('\n\n\nresult for Extra Trees')
-            clf = simple_classification(X_train=X_train, y_train=y_train, classifier=classifier, parameters=parameters)
+            # k-nearest neighbors
+            if 'KNN' in methods:
+                classifier = KNeighborsClassifier()
+                parameters = {'n_neighbors': [3, 4, 5, 6, 7]}
+                print('\n\n\nresult for k-nearest neighbors ')
+                clf = simple_classification(X_train=X_train, y_train=y_train, classifier=classifier, parameters=parameters)
 
-        if 'GBDT' in methods:
-            classifier = GradientBoostingClassifier()
-            parameters = {'n_estimators': [100], 'min_samples_leaf': [5, 7, 10], 'max_depth': [5, 7, 10]}
-            print('\n\n\nresult for Gradient Boosted Regression Trees')
-            clf = simple_classification(X_train=X_train, y_train=y_train, classifier=classifier, parameters=parameters)
-
-        # k-nearest neighbors
-        if 'KNN' in methods:
-            classifier = KNeighborsClassifier()
-            parameters = {'n_neighbors': [3, 4, 5, 6, 7]}
-            print('\n\n\nresult for k-nearest neighbors ')
-            clf = simple_classification(X_train=X_train, y_train=y_train, classifier=classifier, parameters=parameters)
-
-        if 'NN' in methods:
-            scaler = StandardScaler()
-            scaler.fit(X_train)
-            # X_train = scaler.transform(X_train)
-            # X_test = scaler.transform(X_test)
-            classifier = MLPClassifier(hidden_layer_sizes=(50))
-            parameters = {'alpha': [0.0001, 0.001, 0.01], 'hidden_layer_sizes': [(50, 10)]}
-            print('\n\n\nresult for MLPClassifier ')
-            clf = simple_classification(X_train=X_train, y_train=y_train, classifier=classifier, parameters=parameters)
-
+            if 'NN' in methods:
+                scaler = StandardScaler()
+                scaler.fit(X_train)
+                # X_train = scaler.transform(X_train)
+                # X_test = scaler.transform(X_test)
+                classifier = MLPClassifier(hidden_layer_sizes=(50))
+                parameters = {'alpha': [0.0001, 0.001, 0.01], 'hidden_layer_sizes': [(50, 10)]}
+                print('\n\n\nresult for MLPClassifier ')
+                clf = simple_classification(X_train=X_train, y_train=y_train, classifier=classifier, parameters=parameters)
+    except Exception as e:
+        print_exception()
 
 # 工作流
 def simple_classification(X_train, y_train, classifier, parameters):
@@ -218,7 +258,6 @@ def simple_classification(X_train, y_train, classifier, parameters):
     clf = GridSearchCV(classifier, parameters, scoring='accuracy', n_jobs=-1)
     clf.fit(X_train, y_train)
     return clf
-
 
 
 def matrix_fit(train_test, feature_names, idf_vector):
